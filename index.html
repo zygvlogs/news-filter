@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>News Filter / Naujienų filtras</title>
+  <style>
+    body{margin:0;font-family:system-ui,Arial,sans-serif;background:#0b0f14;color:#e6eef6}
+    header{position:sticky;top:0;background:#121822;padding:12px;z-index:10}
+    .controls{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+    .controls label{background:#0f1621;border:1px solid #1f2a3b;padding:6px 10px;border-radius:10px;display:flex;align-items:center;gap:6px;color:#8aa0b2}
+    .controls .spacer{flex:1}
+    button, select{background:#0f1621;color:#e6eef6;border:1px solid #1f2a3b;border-radius:8px;padding:6px 12px;cursor:pointer}
+    main{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px}
+    section{background:#121822;border:1px solid #1f2a3b;border-radius:12px;padding:12px}
+    h2{margin:0 0 10px 0;font-size:16px}
+    h3{margin:10px 0 6px 0;font-size:14px}
+    .list{display:grid;gap:10px}
+    article{background:#0f1621;border:1px solid #1f2a3b;border-radius:10px;padding:10px}
+    .title{font-weight:600}
+    .meta{font-size:12px;color:#8aa0b2;margin-top:4px}
+    .chips{margin-top:6px;display:flex;gap:6px;flex-wrap:wrap}
+    .chip{font-size:11px;padding:3px 8px;border-radius:999px}
+    .chip.bad{background:#1c1214;color:#ff6b6b;border:1px solid #4a1e24}
+    .chip.good{background:#102016;color:#51cf66;border:1px solid #24472f}
+    .chip.mixed{background:#2d1f0f;color:#ffa94d;border:1px solid #805b36}
+    .chip.general{background:#1b2330;color:#b6c7d8;border:1px solid #223146}
+    .empty{color:#8aa0b2;font-size:14px;padding:12px;text-align:center}
+  </style>
+</head>
+<body>
+<header>
+    <div class="controls">
+        <label><input type="checkbox" id="hideNeg" checked> <span data-i18n="hideNeg"></span></label>
+        <label><input type="checkbox" id="onlyNeg"> <span data-i18n="onlyNeg"></span></label>
+        <label><input type="checkbox" id="onlyPos"> <span data-i18n="onlyPos"></span></label>
+        <label><input type="checkbox" id="onlyMixed"> <span data-i18n="onlyMixed"></span></label>
+        <label><input type="checkbox" id="enOn" checked> EN</label>
+        <label><input type="checkbox" id="ltOn" checked> LT</label>
+        <div class="spacer"></div>
+        <select id="langSelect">
+        <option value="en">🇬🇧 English</option>
+        <option value="lt">🇱🇹 Lietuvių</option>
+        </select>
+        <button id="refreshBtn"></button>
+        <span id="countdown"></span>
+        <span id="timeNow"></span>
+    </div>
+    </header>
+
+
+  <main>
+    <section>
+      <h2>🇬🇧 English <span id="enCount">0</span></h2>
+      <div id="enList" class="list"></div>
+    </section>
+    <section>
+      <h2>🇱🇹 Lietuvių <span id="ltCount">0</span></h2>
+      <div id="ltList" class="list"></div>
+    </section>
+  </main>
+
+<script>
+
+let ALL_ITEMS = [];
+let uiLang = "en";
+let timer;
+
+const translations = {
+  en: {
+    hideNeg: "Hide negatives",
+    onlyNeg: "Show only negatives",
+    onlyPos: "Show only positives",
+    onlyMixed: "Show only mixed",
+    refresh: "Refresh",
+    positives: "🟢 Positives",
+    negatives: "🔴 Negatives",
+    mixed: "🟠 Mixed",
+    general: "⚪ Others",
+    noNews: "No news"
+  },
+  lt: {
+    hideNeg: "Slėpti „neigiamas“",
+    onlyNeg: "Rodyti tik „neigiamas“",
+    onlyPos: "Rodyti tik „teigiamas“",
+    onlyMixed: "Rodyti tik „mišrias“",
+    refresh: "Atnaujinti",
+    positives: "🟢 Teigiamos",
+    negatives: "🔴 Neigiamos",
+    mixed: "🟠 Mišrios",
+    general: "⚪ Kitos",
+    noNews: "Nėra naujienų"
+  }
+};
+
+function updateUIlang(){
+  document.querySelectorAll("[data-i18n]").forEach(el=>{
+    el.textContent = translations[uiLang][el.getAttribute("data-i18n")];
+  });
+  document.getElementById("refreshBtn").textContent = translations[uiLang].refresh;
+  render();
+}
+document.getElementById("langSelect").onchange = e=>{
+  uiLang = e.target.value;
+  updateUIlang();
+};
+
+// ---------------- RSS ----------------
+const FEEDS = [
+  { url:"https://feeds.bbci.co.uk/news/world/rss.xml" },
+  { url:"https://feeds.reuters.com/reuters/worldNews" },
+  { url:"https://www.theverge.com/rss/index.xml" },
+  { url:"https://techcrunch.com/feed/" },
+  { url:"https://www.sciencedaily.com/rss/all.xml" },
+  { url:"https://www.espn.com/espn/rss/news" },
+  { url:"https://feeds.bbci.co.uk/sport/rss.xml" },
+  { url:"https://www.rollingstone.com/music/music-news/feed/" },
+  { url:"https://pitchfork.com/feed/feed-news/rss" },
+  { url:"https://www.lrt.lt/rss" },
+  { url:"https://www.15min.lt/rss" }
+];
+
+const TOPIC_KEYWORDS = {
+  politics:["politics","election","minister","party","president","parliament",
+    "politika","rinkimai","ministras","partija","prezidentas","seimas","vyriausybė","įstatymas",
+    "eu","nato","orban","biden","putin","zelensky","trump","macron"],
+  war:["war","conflict","invasion","missile","army","military","russia","ukraine","israel","gaza",
+    "karas","konfliktas","invazija","raketa","armija","kariuomenė","rusija","ukraina","izraelis","gaza"],
+  money:["inflation","recession","debt","crisis","bankruptcy","market","layoffs","tax","economy",
+    "pinigai","infliacija","krizė","skola","bankrotas","ekonomika","mokesčiai"],
+  crime:["police","murder","crime","court","arrested","shooting","drugs","accident","crash",
+    "policija","nusikaltimas","teismas","sulaikytas","šaudymas","narkotikai","avarija"],
+  positive:[
+    "science","research","innovation","technology","startup","ai","robotics","nasa","discovery",
+    "award","prize","festival","concert","art","culture","education","teacher","graduation",
+    "health","medicine","cure","sports","goal","tournament","championship","record",
+    "music","song","album","film","movie",
+    "mokslas","tyrimas","inovacija","technologijos","startuolis","dirbtinis intelektas","atradimas",
+    "apdovanojimas","festivalis","koncertas","kultūra","švietimas","mokytoja","baigimas",
+    "sveikata","gydymas","sportas","pergalė","įvartis","rekordas","muzika","dainininkas","dainininkė","filmas"
+  ]
+};
+
+const LT_CHARS = /[ąčęėįšųūž]/i;
+function detectLang(text){ return LT_CHARS.test(text)?"lt":"en"; }
+
+function classify(text){
+  const t=text.toLowerCase();
+  const hasPositive = TOPIC_KEYWORDS.positive.some(w=>t.includes(w));
+  const hasNegative = Object.entries(TOPIC_KEYWORDS)
+    .some(([k,arr])=>k!=="positive" && arr.some(w=>t.includes(w)));
+  if(hasNegative && hasPositive) return "mixed";
+  if(hasNegative) return "negative";
+  if(hasPositive) return "positive";
+  return "general";
+}
+
+async function fetchRSS(url){
+  const api=`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(url)}`;
+  const res=await fetch(api);
+  const data=await res.json();
+  return data.items.map(it=>{
+    const text=it.title+" "+(it.description||"");
+    return {
+      title:it.title,
+      link:it.link,
+      date:it.pubDate,
+      lang:detectLang(text),
+      topic:classify(text)
+    };
+  });
+}
+
+async function loadAll(){
+  ALL_ITEMS=[];
+  const results=await Promise.allSettled(FEEDS.map(f=>fetchRSS(f.url)));
+  results.forEach(r=>{if(r.status==="fulfilled")ALL_ITEMS.push(...r.value)});
+  render();
+}
+
+function render(){
+  const hideNeg=document.getElementById("hideNeg").checked;
+  const onlyNeg=document.getElementById("onlyNeg").checked;
+  const onlyPos=document.getElementById("onlyPos").checked;
+  const onlyMixed=document.getElementById("onlyMixed").checked;
+  const enOn=document.getElementById("enOn").checked;
+  const ltOn=document.getElementById("ltOn").checked;
+
+  const enList=document.getElementById("enList");
+  const ltList=document.getElementById("ltList");
+  enList.innerHTML=""; ltList.innerHTML="";
+
+  const filtered=ALL_ITEMS.filter(x=>{
+    if(x.lang==="en"&&!enOn)return false;
+    if(x.lang==="lt"&&!ltOn)return false;
+    if(onlyNeg&&x.topic!=="negative")return false;
+    if(onlyPos&&x.topic!=="positive")return false;
+    if(onlyMixed&&x.topic!=="mixed")return false;
+    if(hideNeg&&!onlyNeg&&x.topic==="negative")return false;
+    return true;
+  });
+
+  const en=filtered.filter(i=>i.lang==="en");
+  const lt=filtered.filter(i=>i.lang==="lt");
+
+  function card(it){
+    let cls="general",label="general";
+    if(it.topic==="negative"){cls="bad";label=translations[uiLang].negatives;}
+    if(it.topic==="positive"){cls="good";label=translations[uiLang].positives;}
+    if(it.topic==="mixed"){cls="mixed";label=translations[uiLang].mixed;}
+    if(it.topic==="general"){cls="general";label=translations[uiLang].general;}
+    return `<article>
+      <div class="title"><a href="${it.link}" target="_blank">${it.title}</a></div>
+      <div class="meta">${new Date(it.date).toLocaleString(uiLang)} • ${it.lang.toUpperCase()}</div>
+      <div class="chips"><span class="chip ${cls}">${label}</span></div>
+    </article>`;
+  }
+
+  function sectionBlock(items,key,cls){
+    if(!items.length) return "";
+    return `<div><h3 style="color:${cls}">${translations[uiLang][key]} (${items.length})</h3>${items.map(card).join("")}</div>`;
+  }
+
+  enList.innerHTML =
+    sectionBlock(en.filter(i=>i.topic==="positive"),"positives","#51cf66") +
+    sectionBlock(en.filter(i=>i.topic==="negative"),"negatives","#ff6b6b") +
+    sectionBlock(en.filter(i=>i.topic==="mixed"),"mixed","#ffa94d") +
+    sectionBlock(en.filter(i=>i.topic==="general"),"general","#8aa0b2");
+
+  ltList.innerHTML =
+    sectionBlock(lt.filter(i=>i.topic==="positive"),"positives","#51cf66") +
+    sectionBlock(lt.filter(i=>i.topic==="negative"),"negatives","#ff6b6b") +
+    sectionBlock(lt.filter(i=>i.topic==="mixed"),"mixed","#ffa94d") +
+    sectionBlock(lt.filter(i=>i.topic==="general"),"general","#8aa0b2");
+
+  document.getElementById("enCount").textContent=en.length;
+  document.getElementById("ltCount").textContent=lt.length;
+
+  if(!en.length) enList.innerHTML=`<div class="empty">${translations[uiLang].noNews}</div>`;
+  if(!lt.length) ltList.innerHTML=`<div class="empty">${translations[uiLang].noNews}</div>`;
+}
+
+
+function startTimer(){
+  let next=Date.now()+30*60*1000;
+  function tick(){
+    const left=next-Date.now();
+    if(left<=0){loadAll();startTimer();return;}
+    const m=String(Math.floor(left/60000)).padStart(2,"0");
+    const s=String(Math.floor((left%60000)/1000)).padStart(2,"0");
+    document.getElementById("countdown").textContent=`⏳ ${m}:${s}`;
+
+    
+    const ltTime=new Date().toLocaleString("lt-LT",{timeZone:"Europe/Vilnius"});
+    const usTime=new Date().toLocaleString("en-US",{timeZone:"America/New_York"});
+    const localTime=new Date().toLocaleString(); 
+
+    document.getElementById("timeNow").textContent=
+      `🇱🇹 ${ltTime} | 🇺🇸 ${usTime} | 🖥️ ${localTime}`;
+  }
+  clearInterval(timer);timer=setInterval(tick,1000);tick();
+}
+
+
+
+
+document.getElementById("hideNeg").onchange=render;
+document.getElementById("onlyNeg").onchange=()=>{document.getElementById("onlyPos").checked=false;document.getElementById("onlyMixed").checked=false;render()};
+document.getElementById("onlyPos").onchange=()=>{document.getElementById("onlyNeg").checked=false;document.getElementById("onlyMixed").checked=false;render()};
+document.getElementById("onlyMixed").onchange=()=>{document.getElementById("onlyNeg").checked=false;document.getElementById("onlyPos").checked=false;render()};
+document.getElementById("enOn").onchange=render;
+document.getElementById("ltOn").onchange=render;
+document.getElementById("refreshBtn").onclick=()=>{loadAll();startTimer();};
+
+
+updateUIlang();
+loadAll();
+startTimer();
+</script>
+</body>
+</html>
